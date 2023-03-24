@@ -21,7 +21,7 @@ Log various chat to a discord webhook.
 
 # Creating a webhook
 
-- Create a discord server or use one you have priviledges 
+- Create a discord server or use one you have privileges 
 
 ![image](https://user-images.githubusercontent.com/16944807/216733593-c5250c2a-a339-449f-b2da-73fc6deeec11.png)
 - Edit a text channel
