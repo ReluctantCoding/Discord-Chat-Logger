@@ -64,7 +64,9 @@ public interface DiscordChatLoggerConfig extends Config{
             section = groupOptions
     )
 
-    String webhookGroup();    @ConfigItem(
+    String webhookGroup();    
+    
+    @ConfigItem(
             keyName = "usegroupname",
             name = "Include Group Name",
             description = "Include group name in discord message",
@@ -130,4 +132,16 @@ public interface DiscordChatLoggerConfig extends Config{
     {
         return true;
     }
+    
+    @ConfigItem(
+            keyName = "allowmentionsbyname",
+            name = "Allow discord mention by name",
+            description = "Allow @ mentions by name",
+            position = 5,
+            section = loggingOptions
+    )
+    default boolean allowMentionsByName()
+    {
+        return false;
+    } 
 }
