@@ -130,4 +130,13 @@ public interface DiscordChatLoggerConfig extends Config{
     {
         return true;
     }
+
+    @ConfigItem(
+            keyName = "discordusersandids",
+            name = "Mentionable Discord users",
+            description = "Match users by id i.e. peter:348349289347234879,paul:95932482378237848",
+            position = 5,
+            section = loggingOptions
+    )
+    String discordUsersAndIds();
 }

@@ -7,6 +7,9 @@ import java.io.IOException;
 
 import net.runelite.api.*;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
@@ -65,112 +68,102 @@ public class DiscordChatLoggerPlugin extends Plugin {
 
     @Subscribe
     public void onChatMessage(ChatMessage chatMessage) {
-        if (chatMessage.getType() == ChatMessageType.GAMEMESSAGE || chatMessage.getType() == ChatMessageType.SPAM) {
+        ChatMessageType messageType = chatMessage.getType();
+
+        if (!isChatTypeSupported(messageType)) {
             return;
         }
+
         String sender = chatMessage.getName().replaceAll("\\<.*?>", "").replaceAll("[^0-9a-zA-Z ]+", " ");
-        String receiver;
-        String inputMessage = chatMessage.getMessage();
-        String outputMessage = Text.removeTags(inputMessage);
-        if(chatMessage.getType() == ChatMessageType.PRIVATECHATOUT || chatMessage.getType() == ChatMessageType.PRIVATECHAT) {
-            if (config.usePrivate()) {
-                if (chatMessage.getType() == ChatMessageType.PRIVATECHATOUT && config.logSelf()){
-                    receiver = sender;
-                    sender = getPlayerName();
-                    processPrivate(outputMessage,sender,receiver);
+        String sanitizedMessage = Text.removeTags(chatMessage.getMessage());
+
+        sanitizedMessage = addDiscordIdsToMessage(sanitizedMessage);
+
+        WebhookBody webhookBody = new WebhookBody();
+        StringBuilder stringBuilder = new StringBuilder();
+        String webhookUrl = null;
+
+        if (config.usePrivate() && config.logSelf() && messageType == ChatMessageType.PRIVATECHATOUT ||
+            config.usePrivate() && config.logOthers() && messageType == ChatMessageType.PRIVATECHAT) {
+            String receiverName = messageType == ChatMessageType.PRIVATECHATOUT ? sender : getPlayerName();
+            if (config.includeOtherUsername()) {
+                if (sender.equals(getPlayerName())) {
+                    stringBuilder.append("To **").append(receiverName).append("**").append(": ");
                 }
-                if (chatMessage.getType() == ChatMessageType.PRIVATECHAT && config.logOthers()){
-                    receiver = getPlayerName();
-                    processPrivate(outputMessage,sender,receiver);
-                }
-            }
-        }
-        if(chatMessage.getType() == ChatMessageType.CLAN_GIM_CHAT){
-            String groupName = chatMessage.getSender().replaceAll("\\<.*?>", "").replaceAll("[^0-9a-zA-Z ]+", " ");
-            if (config.useGroup()){
-                if((sender.equals(getPlayerName()) && config.logSelf()) || (!sender.equals(getPlayerName()) && config.logOthers())) {
-                    processGroup(outputMessage, sender, groupName);
+                if (receiverName.equals(getPlayerName())) {
+                    stringBuilder.append("From **").append(sender).append("**").append(": ");
                 }
             }
+            webhookUrl = config.webhookPrivate();
         }
+
+        if (config.useGroup() && (config.logSelf() && sender.equals(getPlayerName())) && messageType == ChatMessageType.CLAN_GIM_CHAT ||
+            config.useGroup() && (config.logOthers() && !sender.equals(getPlayerName())) && messageType == ChatMessageType.CLAN_GIM_CHAT) {
+            String groupName = chatMessage.getSender();
+            if (config.useGroupName()) {
+                stringBuilder.append("**[").append(groupName.replaceAll("\\<.*?>", "").replaceAll("[^0-9a-zA-Z ]+", " ")).append("]** ");
+            }
+            if ((sender.equals(getPlayerName()) && config.includeUsername()) || (!sender.equals(getPlayerName()) && config.includeOtherUsername())) {
+                stringBuilder.append("**").append(sender).append("**").append(": ");
+            }
+            webhookUrl = config.webhookGroup();
+        }
+
+        stringBuilder.append(sanitizedMessage);
+        webhookBody.setContent(stringBuilder.toString());
+        sendWebhook(webhookUrl, webhookBody);
     }
 
-    private String getPlayerName()
-    {
+    private boolean isChatTypeSupported(ChatMessageType type) {
+        return !(type != ChatMessageType.PRIVATECHAT &&
+                 type != ChatMessageType.PRIVATECHATOUT &&
+                 type != ChatMessageType.CLAN_GIM_CHAT);
+    }
+
+    private String getPlayerName() {
         return client.getLocalPlayer().getName();
     }
 
-    private void processPrivate(String outputText,String senderName, String receiverName){
-        WebhookBody webhookBody = new WebhookBody();
-        StringBuilder stringBuilder = new StringBuilder();
-        if(config.includeOtherUsername()) {
-            if (senderName.equals(getPlayerName())) {
-                stringBuilder.append("To **").append(receiverName).append("**").append(" : ");
-            }
-            if (receiverName.equals(getPlayerName())) {
-                stringBuilder.append("From **").append(senderName).append("**").append(" : ");
+    private String addDiscordIdsToMessage(String message) {
+        if (Strings.isNullOrEmpty(config.discordUsersAndIds())) {
+            return message;
+        }
+
+        String newMessage = message;
+
+        for (String userAndId : config.discordUsersAndIds().split(",")) {
+            String[] split = userAndId.split(":");
+            if (newMessage.toLowerCase().contains(split[0].toLowerCase())) {
+                char[] c = newMessage.toCharArray();
+                c[0] = Character.toLowerCase(c[0]);
+                newMessage = new String(c).replace(split[0].toLowerCase(), "<@" + split[1] + ">");
             }
         }
-        stringBuilder.append(outputText);
-        webhookBody.setContent(stringBuilder.toString());
-        sendWebhookPrivate(webhookBody);
+
+        return newMessage;
     }
 
-    private void sendWebhookPrivate(WebhookBody webhookBody)
+    private void sendWebhook(String configUrl, WebhookBody webhookBody)
     {
-        String configUrl = config.webhookPrivate();
-        if (Strings.isNullOrEmpty(configUrl))
-        {
+        if (Strings.isNullOrEmpty(configUrl)) {
             return;
         }
 
         HttpUrl url = HttpUrl.parse(configUrl);
-        MultipartBody.Builder requestBodyBuilder = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("payload_json", GSON.toJson(webhookBody));
-
-            buildRequestAndSend(url, requestBodyBuilder);
-    }
-
-    private void processGroup(String outputText,String senderName, String groupName){
-        WebhookBody webhookBody = new WebhookBody();
-        StringBuilder stringBuilder = new StringBuilder();
-        if (config.useGroupName())
-        {
-            stringBuilder.append("**[").append(groupName).append("]** ");
-        }
-        if ((senderName.equals(getPlayerName()) && config.includeUsername()) || (!senderName.equals(getPlayerName()) && config.includeOtherUsername()))
-        {
-            stringBuilder.append("**").append(senderName).append("**").append(" : ");
-        }
-        stringBuilder.append(outputText);
-        webhookBody.setContent(stringBuilder.toString());
-        sendWebhookGroup(webhookBody);
-    }
-
-    private void sendWebhookGroup(WebhookBody webhookBody)
-    {
-        String configUrl = config.webhookGroup();
-        if (Strings.isNullOrEmpty(configUrl))
-        {
+        if (url == null) {
             return;
         }
 
-        HttpUrl url = HttpUrl.parse(configUrl);
-        MultipartBody.Builder requestBodyBuilder = new MultipartBody.Builder()
+        RequestBody requestBody = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addFormDataPart("payload_json", GSON.toJson(webhookBody));
+                .addFormDataPart("payload_json", GSON.toJson(webhookBody))
+                .build();
 
-        buildRequestAndSend(url, requestBodyBuilder);
-    }
-
-    private void buildRequestAndSend(HttpUrl url, MultipartBody.Builder requestBodyBuilder)
-    {
-        RequestBody requestBody = requestBodyBuilder.build();
         Request request = new Request.Builder()
                 .url(url)
                 .post(requestBody)
                 .build();
+
         sendRequest(request);
     }
 
@@ -179,14 +172,12 @@ public class DiscordChatLoggerPlugin extends Plugin {
         okHttpClient.newCall(request).enqueue(new Callback()
         {
             @Override
-            public void onFailure(Call call, IOException e)
-            {
+            public void onFailure(Call call, IOException e) {
                 log.debug("Error submitting webhook", e);
             }
 
             @Override
-            public void onResponse(Call call, Response response) throws IOException
-            {
+            public void onResponse(Call call, Response response) throws IOException {
                 response.close();
             }
         });
